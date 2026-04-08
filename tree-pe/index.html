@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tree Positional Encodings for Transformers</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css">
+  <style>
+    /* No top-align hack — use large slide height instead */
+
+    .reveal h1, .reveal h2, .reveal h3 { text-transform: none; }
+    .reveal h1 { font-size: 1.8em; }
+    .reveal h2 { font-size: 1.3em; }
+    .reveal h3 { font-size: 1.0em; }
+    .reveal section { text-align: left; }
+    .reveal section.center-slide { text-align: center; }
+    .reveal ul { font-size: 0.8em; line-height: 1.5; }
+    .reveal li { margin-bottom: 0.3em; }
+    .reveal .subtitle { font-size: 0.6em; color: #aaa; margin-top: 0.5em; }
+    .reveal .author { font-size: 0.5em; color: #888; margin-top: 1.5em; }
+    .reveal .highlight { color: #42affa; }
+    .reveal .warn { color: #ff6b6b; }
+    .reveal .math-block {
+      text-align: center;
+      margin: 0.6em 0;
+      font-size: 1.0em;
+    }
+    .reveal table {
+      font-size: 0.75em;
+      margin: 0.5em auto;
+      border-collapse: collapse;
+    }
+    .reveal th, .reveal td {
+      padding: 0.3em 0.8em;
+      border: 1px solid #555;
+      text-align: left;
+    }
+    .reveal th { background: #333; }
+    .reveal .two-col {
+      display: flex;
+      gap: 2em;
+      align-items: flex-start;
+    }
+    .reveal .two-col > div { flex: 1; }
+    .reveal .tree-diagram {
+      font-family: monospace;
+      font-size: 0.75em;
+      line-height: 1.4;
+      text-align: center;
+      color: #42affa;
+      margin: 0.5em 0;
+      background: none;
+      white-space: pre;
+    }
+    .reveal .key-property {
+      background: rgba(66, 175, 250, 0.1);
+      border-left: 3px solid #42affa;
+      padding: 0.4em 0.8em;
+      margin: 0.6em 0;
+      font-size: 0.85em;
+    }
+    .reveal .ref {
+      font-size: 0.55em;
+      color: #888;
+      margin-top: 2em;
+    }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- Slide 1: Title -->
+      <section class="center-slide">
+        <h1>Tree Positional Encodings</h1>
+        <h2>Bringing Hierarchical Structure into Transformers</h2>
+        <p class="subtitle">Based on: Shiv &amp; Quirk, "Novel Positional Encodings to Enable Tree-Based Transformers"</p>
+        <p class="subtitle">NeurIPS 2019</p>
+        <p class="author">Vimal</p>
+        <aside class="notes">
+          Today I want to talk about a really elegant idea: how do you give a transformer
+          the ability to understand tree-structured data — like code, JSON, or mathematical
+          expressions — by designing the right positional encoding?
+          This is based on a NeurIPS 2019 paper by Shiv and Quirk.
+        </aside>
+      </section>
+
+      <!-- Slide 2: The Problem — Structured Text Isn't Flat -->
+      <section>
+        <h2>The Problem &mdash; Structured Text Isn't Flat</h2>
+        <div class="two-col">
+          <div>
+            <h3>Flat sequence</h3>
+            <div style="text-align:center;">
+              <svg width="420" height="60" style="font-family: serif; font-size:15px;">
+                <!-- Nodes -->
+                <circle cx="40" cy="30" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="40" y="36" text-anchor="middle" fill="#42affa" font-weight="bold">1</text>
+                <circle cx="115" cy="30" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="115" y="36" text-anchor="middle" fill="#42affa" font-weight="bold">2</text>
+                <circle cx="190" cy="30" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="190" y="36" text-anchor="middle" fill="#42affa" font-weight="bold">3</text>
+                <circle cx="265" cy="30" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="265" y="36" text-anchor="middle" fill="#42affa" font-weight="bold">4</text>
+                <circle cx="340" cy="30" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="340" y="36" text-anchor="middle" fill="#42affa" font-weight="bold">5</text>
+                <!-- Edges -->
+                <line x1="58" y1="30" x2="97" y2="30" stroke="#42affa" stroke-width="2"/>
+                <line x1="133" y1="30" x2="172" y2="30" stroke="#42affa" stroke-width="2"/>
+                <line x1="208" y1="30" x2="247" y2="30" stroke="#42affa" stroke-width="2"/>
+                <line x1="283" y1="30" x2="322" y2="30" stroke="#42affa" stroke-width="2"/>
+              </svg>
+            </div>
+            <p style="font-size:0.75em;">Standard PE handles this.<br> Position is just a number.<br> PE at distance \(k\) depends only on \(k\).</p>
+          </div>
+          <div>
+            <h3>Tree structure</h3>
+            <div style="text-align:center;">
+              <svg width="320" height="170" style="font-family: serif; font-size:15px;">
+                <!-- Edges -->
+                <line x1="160" y1="25" x2="80" y2="75" stroke="#42affa" stroke-width="2"/>
+                <line x1="160" y1="25" x2="240" y2="75" stroke="#42affa" stroke-width="2"/>
+                <line x1="80" y1="75" x2="40" y2="135" stroke="#42affa" stroke-width="2"/>
+                <line x1="80" y1="75" x2="120" y2="135" stroke="#42affa" stroke-width="2"/>
+                <line x1="240" y1="75" x2="280" y2="135" stroke="#42affa" stroke-width="2"/>
+                <!-- Node backgrounds -->
+                <circle cx="160" cy="25" r="18" fill="#222"/>
+                <circle cx="80" cy="75" r="18" fill="#222"/>
+                <circle cx="240" cy="75" r="18" fill="#222"/>
+                <circle cx="40" cy="135" r="18" fill="#222"/>
+                <circle cx="120" cy="135" r="18" fill="#222"/>
+                <circle cx="280" cy="135" r="18" fill="#222"/>
+                <!-- Nodes -->
+                <circle cx="160" cy="25" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="160" y="30" text-anchor="middle" fill="#fff" font-size="12px">root</text>
+                <circle cx="80" cy="75" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="80" y="81" text-anchor="middle" fill="#42affa" font-weight="bold">A</text>
+                <circle cx="240" cy="75" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="240" y="81" text-anchor="middle" fill="#42affa" font-weight="bold">B</text>
+                <circle cx="40" cy="135" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="40" y="141" text-anchor="middle" fill="#42affa" font-weight="bold">C</text>
+                <circle cx="120" cy="135" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="120" y="141" text-anchor="middle" fill="#42affa" font-weight="bold">D</text>
+                <circle cx="280" cy="135" r="18" fill="none" stroke="#42affa" stroke-width="2"/>
+                <text x="280" y="141" text-anchor="middle" fill="#42affa" font-weight="bold">E</text>
+              </svg>
+            </div>
+            <p style="font-size:0.75em;">Code, JSON, XML, math expressions...<br> Position is a <em>path</em>.</p>
+          </div>
+        </div>
+        <div class="key-property" style="margin-top:0.8em;">
+          How do we encode "go to parent" or "go to 2nd child" in a way the transformer can use?
+        </div>
+        <aside class="notes">
+          Most positional encodings assume data is a flat sequence — position 1, 2, 3, and so on.
+          But much of the data we care about is hierarchical. Code has abstract syntax trees,
+          JSON and XML are trees, mathematical expressions have parse trees.
+
+          In a tree, the relationship between two nodes isn't a simple numeric offset.
+          You might need to go up two levels, then down to a different child.
+          So the question is: can we design a positional encoding that captures tree structure
+          in a way the transformer can naturally work with?
+        </aside>
+      </section>
+
+      <!-- Slide 3: What We Want — Design Goals -->
+      <section>
+        <h2>What We Want</h2>
+        <h3>Sinusoidal PE gives us these guarantees for sequences:</h3>
+        <ul>
+          <li><strong>Uniqueness:</strong> Every position gets a distinct PE vector</li>
+          <li><strong>Relative navigation:</strong> \(\text{PE}(\text{pos}+k) = R_k \cdot \text{PE}(\text{pos})\) &mdash; shift by \(k\) is a fixed affine transform (rotation)</li>
+        </ul>
+        <h3 style="margin-top:0.8em;">Can we get the same for trees?</h3>
+        <ul>
+          <li><strong>Uniqueness:</strong> Can every node get a distinct PE vector?</li>
+          <li><strong>Relative navigation:</strong> Can we compute a node's PE from another node's PE, using just the path between them?</li>
+        </ul>
+        <div class="key-property" style="font-size:0.8em;">
+          <strong>Why "just the path"?</strong> In sinusoidal PE, the shift operation is a rotation matrix &mdash; a simple linear operation that the transformer's layers (QKV projections, linear layers) can represent natively. We want tree navigation to have the same property: an operation simple enough that the transformer doesn't need any special architecture to use it on inputs which are structured like trees.
+        </div>
+        <aside class="notes">
+          Before diving into the solution, let's be clear about what we want.
+
+          Sinusoidal PE gives two nice guarantees for flat sequences: every position gets
+          a unique vector, and shifting by k is a fixed rotation — a simple linear operation.
+
+          We want the exact same properties for trees. Every node should get a unique vector,
+          and we should be able to compute one node's PE from another using just the path between them.
+
+          Why do we care that it's a simple operation? Because the transformer's building blocks —
+          QKV projections, LayerNorm, linear layers — are all linear or affine operations.
+          If tree navigation is also a simple linear operation, the transformer can represent it
+          natively. No special architecture needed — just swap the PE.
+
+          The specific type of "simple operation" turns out to be an affine transform —
+          I'll define that precisely when we get to the solution.
+        </aside>
+      </section>
+
+      <!-- Slide 4: Warm-up — Sinusoidal PE -->
+      <section>
+        <h2>Warm-up &mdash; Sinusoidal PE Does This for Sequences</h2>
+        <div class="math-block" style="font-size:0.85em;">
+          \[ \text{PE}(\text{pos}, 2i) = \sin\!\left(\frac{\text{pos}}{10000^{2i/d}}\right), \;\;
+             \text{PE}(\text{pos}, 2i{+}1) = \cos\!\left(\frac{\text{pos}}{10000^{2i/d}}\right) \]
+        </div>
+        <div class="key-property" style="font-size:0.8em;">
+          <strong>Key property:</strong> \(\text{PE}(\text{pos} + k) = R_k \cdot \text{PE}(\text{pos})\)
+          where \( R_k \) is a <span class="highlight">rotation matrix</span> (from trig identities):
+          \[ \small \begin{bmatrix} \sin(x+y) \\ \cos(x+y) \end{bmatrix}
+             = \begin{bmatrix} \cos y & \sin y \\ -\sin y & \cos y \end{bmatrix}
+               \begin{bmatrix} \sin x \\ \cos x \end{bmatrix} \]
+        </div>
+        <ul style="font-size:0.75em;">
+          <li>Shifting position by \( k \) = fixed rotation matrix &mdash; an affine transform with \(\mathbf{b} = 0\)</li>
+          <li>Can we do the same for <em>tree paths</em> instead of linear shifts?</li>
+        </ul>
+        <aside class="notes">
+          As a warm-up, let's see how sinusoidal PE achieves exactly this property for flat sequences.
+
+          Each position gets a vector of sines and cosines at different frequencies.
+          The beautiful result: shifting position by k is just multiplying by a fixed rotation matrix R_k.
+          This comes directly from the trig identities for sin(x+y) and cos(x+y).
+
+          So sinusoidal PE is a "designed embedding" — engineered so that a specific operation
+          (linear shift) becomes an exact affine transform.
+
+          The question Shiv and Quirk asked: can we design an embedding where
+          tree navigation operations — go to parent, go to child — are also exact affine transforms?
+          The answer is yes. Let me show you how.
+        </aside>
+      </section>
+
+      <!-- Slide 5: From Distances to Paths -->
+      <section>
+        <h2>From Distances to Paths</h2>
+        <ul style="font-size:0.8em;">
+          <li>In sequences, the relationship between two positions is simply the <span class="highlight">distance</span> \(k\)</li>
+          <li>In trees, the relationship is a <span class="highlight">path</span>: a series of steps along branches, each step going up to a parent or down to a child</li>
+        </ul>
+        <div class="key-property" style="font-size:0.85em;">
+          <strong>Desired property:</strong> For every path \(\phi\), there is an affine transform \(A_\phi\) such that:
+          \[ \text{PE}_b = A_\phi \cdot \text{PE}_a \]
+          This allows the transformer to <span class="highlight">learn path-wise relationships</span> within its embedding layers.
+        </div>
+        <aside class="notes">
+          Here's the key shift in thinking. For sequences, the relationship between
+          two positions is just a number — the distance between them. And sinusoidal PE
+          captures that as a rotation matrix.
+
+          For trees, the relationship is richer — it's a path. A series of steps:
+          go up to parent, go down to this child, go down to that child.
+
+          What we want is: for every such path, there should be a corresponding affine transform
+          that maps one node's PE to the other's. If we can achieve this, the transformer
+          can learn path-wise relationships using its existing linear layers.
+          That's the goal Shiv and Quirk set out to achieve.
+        </aside>
+      </section>
+
+      <!-- Slide 6: Steps as Affine Transforms -->
+      <section>
+        <h2>Paths as Compositions of Steps</h2>
+        <ul style="font-size:0.8em;">
+          <li>Two types of steps in any tree path:
+            <ul>
+              <li>\( D_i \) &mdash; step <span class="highlight">down</span> to the \(i\)-th child</li>
+              <li>\( U \) &mdash; step <span class="highlight">up</span> to the parent</li>
+            </ul>
+          </li>
+          <li>Key insight: if each step is an affine transform, the whole path is too<br>
+            <span style="font-size:0.85em; color:#aaa;">(composition of affines is affine)</span></li>
+          <li>Constraint: \( U \cdot D_i = I \; \forall \, i \in \{1, \ldots, n\} \) &mdash; going up negates going down</li>
+        </ul>
+        <div class="key-property">
+          For any path \(\phi\), construct the transform as a composition of \(D\)'s and \(U\)'s:
+          \[ A_\phi = D_{j_m} \cdots D_{j_1} \cdot U^s \]
+          <span style="font-size:0.85em;">( go up \(s\) steps, then down through children \(j_1, j_2, \ldots, j_m\) )</span>
+        </div>
+        <aside class="notes">
+          Any path in a tree is just a series of up and down steps.
+          The paper defines two operators: D_i for stepping down to the i-th child,
+          and U for stepping up to the parent.
+
+          The crucial insight: if we can make each individual step an affine transform,
+          then any path — which is a composition of steps — is automatically also an affine transform.
+          Because composing affine transforms gives you another affine transform.
+
+          The cancellation property U times D_i equals identity is also important —
+          going down to a child and back up returns you to where you started.
+
+          Let's see this in action with examples on the next slide.
+        </aside>
+      </section>
+
+      <!-- Slide 7: Examples -->
+      <section>
+        <h2>Examples &mdash; Navigating the Tree</h2>
+        <div style="text-align:center; margin-bottom:0.5em;">
+          <svg width="700" height="280" style="font-family: serif; font-size:17px;">
+            <!-- r's 3 children edges -->
+            <line x1="350" y1="30" x2="150" y2="100" stroke="#c44" stroke-width="3"/>
+            <line x1="350" y1="30" x2="350" y2="100" stroke="#888" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="350" y1="30" x2="550" y2="100" stroke="#5a5" stroke-width="3"/>
+            <!-- x's 3 children edges -->
+            <line x1="150" y1="100" x2="50" y2="180" stroke="#888" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="150" y1="100" x2="150" y2="180" stroke="#888" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="150" y1="100" x2="280" y2="180" stroke="#46a" stroke-width="3"/>
+            <!-- y's 3 children edges -->
+            <line x1="280" y1="180" x2="210" y2="255" stroke="#888" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="280" y1="180" x2="350" y2="255" stroke="#b80" stroke-width="3"/>
+            <line x1="280" y1="180" x2="420" y2="255" stroke="#888" stroke-width="1.5" stroke-dasharray="4"/>
+            <!-- w's 3 children edges -->
+            <line x1="550" y1="100" x2="480" y2="180" stroke="#888" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="550" y1="100" x2="550" y2="180" stroke="#888" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="550" y1="100" x2="650" y2="180" stroke="#888" stroke-width="1.5" stroke-dasharray="4"/>
+            <!-- Node backgrounds -->
+            <circle cx="350" cy="30" r="18" fill="#222"/>
+            <circle cx="150" cy="100" r="18" fill="#222"/>
+            <circle cx="550" cy="100" r="18" fill="#222"/>
+            <circle cx="280" cy="180" r="18" fill="#222"/>
+            <circle cx="350" cy="255" r="18" fill="#222"/>
+            <!-- Nodes -->
+            <circle cx="350" cy="30" r="18" fill="none" stroke="#fff" stroke-width="2"/>
+            <text x="350" y="36" text-anchor="middle" fill="#fff" font-weight="bold">r</text>
+            <circle cx="150" cy="100" r="18" fill="none" stroke="#c44" stroke-width="2"/>
+            <text x="150" y="106" text-anchor="middle" fill="#c44" font-weight="bold">x</text>
+            <circle cx="350" cy="100" r="4" fill="#888"/>
+            <circle cx="550" cy="100" r="18" fill="none" stroke="#5a5" stroke-width="2"/>
+            <text x="550" y="106" text-anchor="middle" fill="#5a5" font-weight="bold">w</text>
+            <circle cx="50" cy="180" r="4" fill="#888"/>
+            <circle cx="150" cy="180" r="4" fill="#888"/>
+            <circle cx="280" cy="180" r="18" fill="none" stroke="#46a" stroke-width="2"/>
+            <text x="280" y="186" text-anchor="middle" fill="#46a" font-weight="bold">y</text>
+            <circle cx="210" cy="255" r="4" fill="#888"/>
+            <circle cx="350" cy="255" r="18" fill="none" stroke="#b80" stroke-width="2"/>
+            <text x="350" y="261" text-anchor="middle" fill="#b80" font-weight="bold">z</text>
+            <circle cx="420" cy="255" r="4" fill="#888"/>
+            <circle cx="480" cy="180" r="4" fill="#888"/>
+            <circle cx="550" cy="180" r="4" fill="#888"/>
+            <circle cx="650" cy="180" r="4" fill="#888"/>
+            <!-- Edge labels -->
+            <text x="232" y="55" fill="#c44" font-size="16px" font-style="italic">D₀</text>
+            <text x="468" y="55" fill="#5a5" font-size="16px" font-style="italic">D₂</text>
+            <text x="228" y="133" fill="#46a" font-size="16px" font-style="italic">D₂</text>
+            <text x="330" y="213" fill="#b80" font-size="16px" font-style="italic">D₁</text>
+          </svg>
+        </div>
+        <div class="key-property" style="font-size:0.7em; padding:0.3em 0.8em; margin:0.3em 0;">
+          <strong>Up and down</strong> &mdash; path from <span style="color:#b80;">z</span> to <span style="color:#5a5;">w</span>:
+          up 3 steps to <span style="color:#fff;">r</span>, then down to 3rd child:
+          &ensp; \( \text{PE}_w = D_2 \cdot U^3 \cdot \text{PE}_z \)
+        </div>
+        <div class="key-property" style="font-size:0.7em; padding:0.3em 0.8em; margin:0.3em 0;">
+          <strong>Going down</strong> &mdash; path from <span style="color:#c44;">x</span> to <span style="color:#b80;">z</span> (via <span style="color:#46a;">y</span>):
+          step to 3rd child, then to 2nd child:
+          &ensp; \( \text{PE}_z = D_1 \cdot D_2 \cdot \text{PE}_x \)
+        </div>
+        <div class="key-property" style="font-size:0.7em; padding:0.3em 0.8em; margin:0.3em 0;">
+          <strong>Going up</strong> &mdash; path from <span style="color:#b80;">z</span> to <span style="color:#fff;">r</span>:
+          3 steps up:
+          &ensp; \( \text{PE}_r = U^3 \cdot \text{PE}_z \)
+        </div>
+        <aside class="notes">
+          Three examples showing different types of tree navigation.
+
+          First, the most interesting: z to w crosses branches. Go up 3 steps to root,
+          then down to the 3rd child. PE_w equals D_2 times U cubed times PE_z.
+
+          Second, going down: x to z via y. Two D steps: D_2 then D_1.
+
+          Third, going up: z to root is three U steps.
+
+          In all cases, one node's PE is expressed in terms of another's
+          and the path between them — without knowing the actual PE vectors.
+        </aside>
+      </section>
+
+      <!-- Slide 8: The Encoding -->
+      <section>
+        <h2>The Encoding Scheme</h2>
+        <ul style="font-size:0.78em;">
+          <li>Two hyperparameters: \(n\) (degree of tree), \(k\) (max depth)</li>
+          <li>Each positional encoding is a vector of dimension <span class="highlight">\(n \cdot k\)</span></li>
+          <li>Each operator \(U, D_1, \ldots, D_n\) preserves this dimensionality</li>
+          <li>The <span class="highlight">root</span> is encoded as the <span class="highlight">zero vector</span></li>
+          <li>Every other node is encoded according to its <em>path from the root</em></li>
+        </ul>
+        <p style="font-size:0.8em;">Since paths from root consist only of steps downward \(\langle b_1, \ldots, b_L \rangle\):</p>
+        <div class="math-block">
+          \[ \mathbf{x} = D_{b_L} \, D_{b_{L-1}} \cdots D_{b_1} \, \mathbf{0} \]
+        </div>
+        <aside class="notes">
+          The paper proposes a stack-like encoding for tree positions.
+
+          It takes two hyperparameters: n, the degree of the tree (assumed regular),
+          and k, the maximum depth. Each positional encoding is a vector of dimension n times k.
+          Each operator — U and the D operators — preserves this dimensionality.
+
+          The root position is the zero vector. Every other node's position is encoded
+          according to its path from root. Since paths from root only go downward,
+          we can write the path as a sequence of child choices b_1 through b_L,
+          where L is the depth of the node.
+
+          The encoding is then: apply D_b1, then D_b2, and so on up to D_bL, starting from zero.
+
+          At this point we know what the PE represents — but not how D_i actually works internally.
+          That's the next slide.
+        </aside>
+      </section>
+
+      <!-- Slide 9: Inside the Operators -->
+      <section>
+        <h2>Inside the Operators</h2>
+        <ul style="font-size:0.78em;">
+          <li>Treat the PE vector as a <span class="highlight">stack</span> of single steps (at most \(k\) entries, one per depth level)</li>
+          <li>Each step is represented as a <span class="highlight">one-hot \(n\)-vector</span> indicating which child was taken</li>
+          <li>\( D_i \): <strong>pushes</strong> the one-hot vector for child \(i\) onto the stack (truncating the oldest entry to preserve dimension)</li>
+          <li>\( U \): <strong>pops</strong> the most recent entry off the stack (padding with zeros)</li>
+        </ul>
+        <div style="text-align:center; margin:0.5em 0;">
+          <img src="tree-pe-example.png" alt="Tree PE example: nodes r, x, y, z with their PE vectors as stacks of one-hots" style="max-height:280px; background:#fff; border-radius:6px; padding:8px;">
+        </div>
+        <aside class="notes">
+          Now we define D_i and U. The intuition is to treat the positional encoding
+          as a stack of single steps. Each step is a one-hot n-vector that says
+          "which child was taken at this depth."
+
+          D_i pushes a new one-hot vector for child i onto the stack.
+          To preserve the fixed dimensionality, the oldest entry gets truncated.
+          U does the reverse — pops the most recent entry and pads with zeros.
+
+          The figure shows this in action. Root is all zeros.
+          D_0 pushes [1,0,0] onto the stack — you can see it appear in x's encoding.
+          D_2 pushes [0,0,1] — it appears in y's encoding, shifting x's chunk over.
+          D_1 pushes [0,1,0] — it appears in z's encoding.
+
+          The key observation: D_i is affine — the shift is the linear part,
+          the one-hot insertion is the translation. U is purely linear.
+          So any path composed from these operators is affine by construction.
+        </aside>
+      </section>
+
+      <!-- Slide 10: Why Are These Operations Affine? -->
+      <section>
+        <h2>Why Are These Operations Affine?</h2>
+        <p style="font-size:0.78em;">Concrete example: \(n = 3\) (ternary tree), \(k = 3\) (max depth) &rarr; PE dimension = 9</p>
+        <div class="two-col" style="gap:1.5em;">
+          <div>
+            <h3 style="font-size:0.9em;">\( D_1 \) (push child 1)</h3>
+            <div class="math-block" style="font-size:0.65em; margin:0.3em 0;">
+\[ D_1 \mathbf{x} = \underbrace{\begin{bmatrix} 0&0&0&0&0&0&0&0&0 \\ 0&0&0&0&0&0&0&0&0 \\ 0&0&0&0&0&0&0&0&0 \\ \color{#42affa}{1}&0&0&0&0&0&0&0&0 \\ 0&\color{#42affa}{1}&0&0&0&0&0&0&0 \\ 0&0&\color{#42affa}{1}&0&0&0&0&0&0 \\ 0&0&0&\color{#42affa}{1}&0&0&0&0&0 \\ 0&0&0&0&\color{#42affa}{1}&0&0&0&0 \\ 0&0&0&0&0&\color{#42affa}{1}&0&0&0 \end{bmatrix}}_{A} \mathbf{x} + \underbrace{\begin{bmatrix} 0\\\color{#ff6b6b}{1}\\0 \\ 0\\0\\0 \\ 0\\0\\0 \end{bmatrix}}_{\mathbf{b}} \]
+            </div>
+            <ul style="font-size:0.65em;">
+              <li>\(A\): shifts elements right by \(n\) positions (selects first 6, places at positions 4&ndash;9)</li>
+              <li>\(\mathbf{b}\): one-hot for child 1 in the first chunk</li>
+            </ul>
+          </div>
+          <div>
+            <h3 style="font-size:0.9em;">\( U \) (pop / go to parent)</h3>
+            <div class="math-block" style="font-size:0.65em; margin:0.3em 0;">
+\[ U \mathbf{x} = \underbrace{\begin{bmatrix} 0&0&0&\color{#42affa}{1}&0&0&0&0&0 \\ 0&0&0&0&\color{#42affa}{1}&0&0&0&0 \\ 0&0&0&0&0&\color{#42affa}{1}&0&0&0 \\ 0&0&0&0&0&0&\color{#42affa}{1}&0&0 \\ 0&0&0&0&0&0&0&\color{#42affa}{1}&0 \\ 0&0&0&0&0&0&0&0&\color{#42affa}{1} \\ 0&0&0&0&0&0&0&0&0 \\ 0&0&0&0&0&0&0&0&0 \\ 0&0&0&0&0&0&0&0&0 \end{bmatrix}}_{A} \mathbf{x} + \underbrace{\begin{bmatrix} 0\\0\\0 \\ 0\\0\\0 \\ 0\\0\\0 \end{bmatrix}}_{\mathbf{0}} \]
+            </div>
+            <ul style="font-size:0.65em;">
+              <li>\(A\): shifts elements left by \(n\) positions (selects last 6, places at positions 1&ndash;6)</li>
+              <li>No translation needed &mdash; purely linear</li>
+            </ul>
+          </div>
+        </div>
+        <div class="key-property" style="font-size:0.75em; margin-top:0.4em;">
+          Push/pop on a fixed-size vector = rearranging elements (matrix \(A\)) + inserting a constant (vector \(\mathbf{b}\)) = <span class="highlight">affine</span>. Composing affines gives affine &rarr; \(\text{PE}_b = A_\phi \cdot \text{PE}_a + \mathbf{b}_\phi\).
+        </div>
+        <aside class="notes">
+          Let's see exactly why these operations are affine by writing out the actual matrices.
+
+          Take a ternary tree with max depth 3, so PE vectors are 9-dimensional.
+
+          D_1 — push child 1 — does two things. First, shift all elements right by 3 positions.
+          This drops the last 3 elements and opens up the first 3 positions.
+          That's the matrix A — it has 1s on a diagonal shifted down by 3.
+          Second, put a one-hot vector for child 1 in the first 3 positions.
+          That's the vector b — it has a 1 in position 2 (child 1, zero-indexed).
+
+          So D_1 x = Ax + b. Matrix times vector plus constant vector. That's affine.
+
+          U does the reverse. Shift everything left by 3 positions, pad zeros at the end.
+          The matrix A has 1s on a diagonal shifted up by 3.
+          No constant vector needed — b is zero. So U is purely linear.
+
+          The punch line: push and pop on a fixed-size vector are just rearranging elements
+          (that's a matrix multiply) and optionally inserting a constant (that's translation).
+          That's exactly what affine means. And composing affines gives affine.
+        </aside>
+      </section>
+
+      <!-- Slide 11: Worked Example -->
+      <section>
+        <h2>Worked Example</h2>
+        <p style="font-size:0.78em;">Using our ternary tree (\(n=3, k=3\)). Start with node \(y\) from earlier: \(y = D_2 \cdot D_0 \cdot \mathbf{0}\)</p>
+        <div class="math-block" style="font-size:0.8em;">
+          \[
+          \mathbf{y} = [\underbrace{1,0,0}_{\text{child 0}},\underbrace{0,0,1}_{\text{child 2}},\underbrace{0,0,0}_{\text{empty}}]
+          \]
+        </div>
+        <h3 style="font-size:0.9em; margin-top:0.5em;">Apply \(D_1\): go to child 1 of \(y\) &rarr; node \(z\)</h3>
+        <div class="math-block" style="font-size:0.75em;">
+          \[
+          D_1 \mathbf{y} = A\mathbf{y} + \mathbf{b}
+          = [\underbrace{0,0,0,\;1,0,0,\;0,0,1}_{A\mathbf{y}: \text{ shift right by 3}}]
+          + [\underbrace{0,1,0}_{\mathbf{b}},\;0,0,0,\;0,0,0]
+          = [\underbrace{0,1,0}_{\text{child 1}},\underbrace{1,0,0}_{\text{child 0}},\underbrace{0,0,1}_{\text{child 2}}]
+          = \mathbf{z}
+          \]
+        </div>
+        <h3 style="font-size:0.9em; margin-top:0.5em;">Apply \(U\): go back up from \(z\) &rarr; node \(y\)</h3>
+        <div class="math-block" style="font-size:0.75em;">
+          \[
+          U \mathbf{z} = A\mathbf{z} + \mathbf{0}
+          = [\underbrace{1,0,0,\;0,0,1,\;0,0,0}_{A\mathbf{z}: \text{ shift left by 3, pad zeros}}]
+          = \mathbf{y}
+          \]
+        </div>
+        <div class="key-property" style="font-size:0.75em; margin-top:0.3em;">
+          Because these operations can be described as matrix operations, they are <span class="highlight">affine</span>. And \( U \cdot D_1 \cdot \mathbf{y} = \mathbf{y} \) &mdash; the constraint \( U \cdot D_i = I \) holds exactly.
+        </div>
+        <aside class="notes">
+          Let's trace through a concrete example using the tree from earlier.
+
+          Node y has encoding [1,0,0, 0,0,1, 0,0,0]. You can read this as:
+          first chunk is child 0, second chunk is child 2, third chunk is empty.
+
+          Apply D_1 to go to child 1 of y. First, A times y shifts everything right by 3:
+          the first chunk becomes empty, the old first chunk moves to position 2,
+          the old second chunk moves to position 3.
+          Then add b — the one-hot for child 1 — in the first chunk.
+          Result: [0,1,0, 1,0,0, 0,0,1]. That's z's encoding.
+
+          Now apply U to z to go back up. A times z shifts everything left by 3
+          and pads zeros at the end. Result: [1,0,0, 0,0,1, 0,0,0]. That's y again.
+
+          U times D_1 times y equals y. The constraint U D_i = I holds exactly.
+        </aside>
+      </section>
+
+      <!-- Slide 12: Why Design Instead of Learn? -->
+      <section>
+        <h2>Why Design the Embedding Instead of Learning It?</h2>
+        <table>
+          <tr>
+            <th></th>
+            <th>Learned (Free)</th>
+            <th>Designed (Sinusoidal PE, Tree PE)</th>
+          </tr>
+          <tr>
+            <td><strong>How</strong></td>
+            <td>Gradient descent finds embeddings</td>
+            <td>Engineered for algebraic properties</td>
+          </tr>
+          <tr>
+            <td><strong>Guarantees</strong></td>
+            <td>None &mdash; structure may emerge</td>
+            <td>Exact by construction</td>
+          </tr>
+          <tr>
+            <td><strong>Flexibility</strong></td>
+            <td>High</td>
+            <td>Constrained to design</td>
+          </tr>
+          <tr>
+            <td><strong>Length generalization</strong></td>
+            <td>No</td>
+            <td>Yes</td>
+          </tr>
+        </table>
+        <div class="key-property" style="font-size:0.8em;">
+          <strong>Word2Vec:</strong> Learned embeddings <em>can</em> discover affine structure
+          (\(\text{king} - \text{man} + \text{woman} \approx \text{queen}\))
+          &mdash; but it's approximate, not guaranteed.
+          The tree PE we just saw gives you <span class="highlight">exactness by construction</span>.
+        </div>
+        <aside class="notes">
+          Now that we've seen how tree PE works, let's step back and ask: why go through
+          all this design effort? Why not just learn the positional embeddings like BERT and GPT do?
+
+          Learned embeddings are flexible — gradient descent figures out the vectors.
+          And they CAN discover affine-like structure. Word2Vec famously showed
+          king minus man plus woman approximately equals queen — an affine relationship
+          that emerged from training. But it's approximate.
+
+          What we just built with tree PE is exact by construction. The push/pop operators
+          are exactly affine. Path composition is exactly affine. And because the structure
+          is designed in, it generalizes to tree depths not seen during training.
+
+          When you know the structure your data has — and trees are a case where you do —
+          designing it in is worth the trade-off.
+        </aside>
+      </section>
+
+      <!-- Slide 9: Practical Enhancements -->
+      <section>
+        <h2>Practical Enhancements</h2>
+        <h3>Geometric Weighting</h3>
+        <ul>
+          <li>Scale each stack level by \( p^i \):
+            \(\; [\;1 \cdot c_1 \;|\; p \cdot c_2 \;|\; p^2 \cdot c_3 \;|\; \cdots \;] \)</li>
+          <li>Learnable \( p \) &mdash; controls weight of deep vs shallow ancestry</li>
+          <li>Concatenate versions with different \( p \) (like multiple frequencies in sinusoidal PE)</li>
+        </ul>
+        <h3 style="margin-top:0.8em;">Binarization</h3>
+        <ul>
+          <li>Any tree &rarr; binary via <span class="highlight">left-child-right-sibling</span> encoding</li>
+          <li>Reduces branching factor to \( n = 2 \) &rarr; compact PE vectors</li>
+        </ul>
+        <aside class="notes">
+          Two practical tricks from the paper, briefly.
+
+          Geometric weighting: the raw stack treats every depth equally.
+          Scaling by p-to-the-i with learnable p lets the model control how much
+          to weigh recent vs distant ancestry. Multiple p values are like multiple frequencies.
+
+          Binarization: real trees like code ASTs have high branching.
+          Left-child-right-sibling encoding converts any tree to binary, keeping chunks small.
+
+          I won't go deep into these, but they're key for making this practical.
+        </aside>
+      </section>
+
+
+      <!-- Slide 11: Takeaway + References -->
+      <section class="center-slide">
+        <h2>Takeaway</h2>
+        <p style="font-size:1.0em;">
+          <em>Tree PE encodes hierarchical structure as a stack of one-hot vectors,<br>
+          making every tree navigation an exact affine transform &mdash;<br>
+          just as sinusoidal PE makes every position shift a rotation.</em>
+        </p>
+        <div style="margin-top:1.5em; text-align:left; max-width:80%; margin-left:auto; margin-right:auto;">
+          <h3>References</h3>
+          <ul style="font-size:0.65em;">
+            <li>Shiv &amp; Quirk, <em>"Novel Positional Encodings to Enable Tree-Based Transformers"</em>, NeurIPS 2019</li>
+            <li>Vaswani et al., <em>"Attention Is All You Need"</em>, NeurIPS 2017</li>
+            <li>Mikolov et al., <em>"Efficient Estimation of Word Representations in Vector Space"</em> (Word2Vec), 2013</li>
+          </ul>
+        </div>
+        <p class="author" style="margin-top:1.5em;">Thank you!</p>
+        <aside class="notes">
+          To summarize: tree PE takes the same design principle behind sinusoidal PE — make operations
+          exact affine transforms — and extends it to trees using a stack of one-hot vectors
+          with push and pop operators.
+
+          The result: any tree path is a single affine transform, usable natively by the transformer.
+
+          Thank you — happy to take questions!
+        </aside>
+      </section>
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/math/math.js"></script>
+  <script>
+    Reveal.initialize({
+      hash: true,
+      slideNumber: true,
+      center: false,
+      width: 1200,
+      height: 900,
+      margin: 0.02,
+      minScale: 0.2,
+      maxScale: 1.5,
+      plugins: [ RevealNotes, RevealMath.MathJax3 ],
+      mathjax3: {
+        mathjax: 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js',
+        tex: {
+          inlineMath: [['\\(', '\\)']],
+          displayMath: [['\\[', '\\]']]
+        }
+      }
+    });
+  </script>
+</body>
+</html>
