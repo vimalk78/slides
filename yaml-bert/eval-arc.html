@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="author" content="Vimal Kumar (vimalk78)">
+  <meta name="description" content="YAML-BERT — a tree-aware transformer for Kubernetes manifests">
+  <meta name="source" content="https://github.com/vimalk78/slides">
+  <title>YAML-BERT — Tree-aware transformer for Kubernetes YAML</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css">
+  <style>
+    .reveal h1, .reveal h2, .reveal h3 { text-transform: none; }
+    .reveal h1 { font-size: 1.7em; }
+    .reveal h2 { font-size: 1.25em; }
+    .reveal h3 { font-size: 1.0em; }
+    .reveal section { text-align: left; }
+    .reveal section.center-slide { text-align: center; }
+    .reveal ul { font-size: 0.78em; line-height: 1.5; }
+    .reveal li { margin-bottom: 0.3em; }
+    .reveal pre { font-size: 0.55em; }
+    .reveal .subtitle { font-size: 0.6em; color: #aaa; margin-top: 0.5em; }
+    .reveal .author { font-size: 0.55em; color: #888; margin-top: 1.5em; }
+    .reveal .highlight { color: #42affa; }
+    .reveal .warn { color: #ff6b6b; }
+    .reveal .good { color: #6bce7a; }
+    .reveal table {
+      font-size: 0.7em;
+      margin: 0.5em auto;
+      border-collapse: collapse;
+    }
+    .reveal th, .reveal td {
+      padding: 0.3em 0.8em;
+      border: 1px solid #555;
+      text-align: left;
+    }
+    .reveal th { background: #333; }
+    .reveal .two-col {
+      display: flex;
+      gap: 2em;
+      align-items: flex-start;
+    }
+    .reveal .two-col > div { flex: 1; }
+    .reveal .key-property {
+      background: rgba(66, 175, 250, 0.1);
+      border-left: 3px solid #42affa;
+      padding: 0.4em 0.8em;
+      margin: 0.6em 0;
+      font-size: 0.8em;
+    }
+    .reveal .takeaway {
+      background: rgba(107, 206, 122, 0.08);
+      border-left: 3px solid #6bce7a;
+      padding: 0.4em 0.8em;
+      margin: 0.6em 0;
+      font-size: 0.8em;
+    }
+    .reveal .bug {
+      background: rgba(255, 107, 107, 0.08);
+      border-left: 3px solid #ff6b6b;
+      padding: 0.4em 0.8em;
+      margin: 0.6em 0;
+      font-size: 0.8em;
+    }
+    .reveal .tree-diagram {
+      font-family: monospace;
+      font-size: 0.75em;
+      line-height: 1.4;
+      text-align: center;
+      color: #42affa;
+      margin: 0.5em 0;
+      background: none;
+      white-space: pre;
+    }
+    .reveal iframe { border: 0; background: white; }
+    .slide-footer {
+      position: fixed;
+      bottom: 10px;
+      left: 20px;
+      font-size: 0.65em;
+      color: #666;
+      z-index: 100;
+      font-family: system-ui, sans-serif;
+    }
+    .slide-footer a { color: #555; text-decoration: none; }
+    .slide-footer a:hover { color: #42affa; }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- Slide 1: Title -->
+      <section class="center-slide">
+        <h1>YAML-BERT</h1>
+        <h2>A tree-aware transformer for Kubernetes manifests</h2>
+        <p class="subtitle">tree positional encoding + structural prediction + an honest evaluation arc</p>
+        <p class="author">Vimal Kumar</p>
+        <p class="author">code: <a href="https://github.com/vimalk78/yaml-bert">github.com/vimalk78/yaml-bert</a></p>
+        <aside class="notes">
+          Today I want to walk through a project: a BERT-style transformer trained on
+          Kubernetes YAML, with two twists — tree-aware positional encoding, and a hybrid
+          prediction target that exploits the structure. More importantly, I want to share
+          the evaluation arc: what worked, what didn't, and what I learned about the limits
+          of capability suites.
+        </aside>
+      </section>
+
+      <!-- Slide 2: Why this is interesting -->
+      <section>
+        <h2>YAML is a tree. Transformers see sequences.</h2>
+        <div class="two-col">
+          <div>
+            <h3>What the encoder sees today</h3>
+            <pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:                # ← "spec" at depth 0
+  replicas: 3
+  template:
+    spec:            # ← "spec" at depth 2
+      containers:
+      - name: web
+        image: nginx</code></pre>
+            <p style="font-size:0.7em;">Same token, different roles. Standard PE
+            says "different sequence positions" — but not <em>different tree positions</em>.</p>
+          </div>
+          <div>
+            <h3>What it actually is</h3>
+            <div class="tree-diagram">apiVersion
+kind
+metadata
+└─ name
+spec
+├─ replicas
+└─ template
+   └─ spec
+      └─ containers[]
+         ├─ name
+         └─ image</div>
+            <p style="font-size:0.7em;"><strong>Sequential position is 1D.</strong>
+            <br><strong>Tree position is multi-dimensional</strong> — depth, sibling, parent path.</p>
+          </div>
+        </div>
+        <div class="key-property">
+          <strong>Hypothesis:</strong> tell the model about the tree directly — encode
+          depth + sibling + node type — and it should learn K8s structure faster and
+          more reliably than inferring it all from context.
+        </div>
+        <aside class="notes">
+          Look at the YAML on the left. The token "spec" appears twice — once at the top
+          level (the Deployment's spec) and once nested under template (a Pod spec).
+          Same token, completely different meaning. Standard sequential positional encoding
+          tells the model these are at different sequence positions, but doesn't tell it
+          they're at different tree positions. The model has to infer the entire tree
+          structure from context. Tree positional encoding fixes that by encoding where
+          in the tree each node sits — depth, sibling index, node type — as three
+          additional learned embeddings summed into the input.
+        </aside>
+      </section>
+
+      <!-- Slide 3: The approach -->
+      <section>
+        <h2>The approach</h2>
+        <h3>1. Tree positional encoding (replaces standard learned PE)</h3>
+        <pre><code class="language-python">tree_pos = depth_emb[depth]      # 16 depth slots
+         + sibling_emb[sibling]   # 32 sibling slots
+         + node_type_emb[type]    # KEY / VALUE / LIST_KEY / LIST_VALUE
+input    = LayerNorm(token_emb + tree_pos)</code></pre>
+        <p style="font-size:0.75em;">Architecture-agnostic — could plug into any sequential encoder.
+        No sequence-index encoding at all; position is purely structural.</p>
+
+        <h3>2. BERT-style encoder with masked-key prediction</h3>
+        <p style="font-size:0.75em;">6-layer transformer encoder, d_model 256, 8 heads, 7.8M params.
+        MLM training: mask 15% of KEY tokens, predict each from bidirectional context.</p>
+
+        <h3>3. Hybrid prediction targets — exploit structural locality</h3>
+        <ul>
+          <li><strong>Simple target</strong>: <code>parent::child</code> → <code>spec::replicas</code></li>
+          <li><strong>Kind-specific target</strong>: <code>kind::parent::child</code> → <code>Deployment::spec::replicas</code></li>
+          <li>Two prediction heads route by position; same shared encoder body</li>
+        </ul>
+        <div class="key-property">
+          <strong>Design principle:</strong> the kind (<code>Deployment</code>) and parent
+          key (<code>spec</code>) are <em>NOT in the input embedding</em>. The model must
+          <strong>discover them through attention</strong> to predict the trigram correctly.
+          Probing: kind recoverability climbs 21% → 51% from embedding to final layer —
+          built entirely by attention.
+        </div>
+        <p style="font-size:0.7em;color:#aaa;">Trained on 276K K8s manifests from
+        <code>substratusai/the-stack-yaml-k8s</code>, 30 epochs on an L4 GPU.</p>
+        <aside class="notes">
+          Three design choices to highlight, in order. First, the positional encoding is
+          purely structural — depth, sibling, node-type. No sequence-index. This bit is
+          architecture-agnostic — you could plug it into any encoder.
+
+          Second, the model is a BERT-style encoder trained with masked language modeling.
+          We mask 15% of key tokens and the model learns to predict each from context.
+
+          Third — and this depends on the BERT setup — the prediction target is
+          parent-aware. When the model predicts 'replicas', it's actually predicting
+          'spec::replicas'. This forces the model to learn parent-child relationships
+          rather than just key identity.
+        </aside>
+      </section>
+
+      <!-- Slide 4: Headline result -->
+      <section>
+        <h2>It works — v5 evaluation</h2>
+        <table>
+          <tr><th>Metric</th><th>v5</th></tr>
+          <tr><td>Pretrain capability tests</td><td class="good">93 / 93</td></tr>
+          <tr><td>Structural tests</td><td>6 / 9</td></tr>
+          <tr><td>Document similarity (off-diagonal cosine)</td><td>0.46 (target &lt; 0.70)</td></tr>
+          <tr><td>Model parameters</td><td>7.8 M</td></tr>
+          <tr><td>Training</td><td>30 epochs on L4 GPU</td></tr>
+        </table>
+        <h3>Downstream: missing-field suggestion (real K8s YAML, no fine-tuning)</h3>
+        <pre><code>spec.template.spec.containers.0.resources:
+    [99.8%] requests (STRONG)
+spec:
+    [99.4%] strategy (STRONG)
+metadata:
+    [96.7%] labels (STRONG)
+ports.0:
+    [95.6%] name (STRONG)</code></pre>
+        <p style="font-size:0.7em;color:#aaa;">Run on a sample nginx Deployment that omits these fields.
+        Model identifies them as missing and ranks confidence.</p>
+        <aside class="notes">
+          The headline is encouraging — 93/93 capability tests covering 28 distinct
+          structural behaviors, and the missing-field tool produces useful suggestions on
+          real K8s YAMLs without any task-specific fine-tuning. So far so good.
+        </aside>
+      </section>
+
+      <!-- Slide 5: Ablation — honest finding -->
+      <section>
+        <h2>But ablations told a more honest story</h2>
+        <p style="font-size:0.75em;">Compared 4 positional-encoding variants under identical training
+        (same data, same hyperparams, same seed) at two data scales:</p>
+        <table>
+          <tr><th>Variant</th><th>5K docs × 10 ep</th><th>25K × 10 ep (seed 42)</th><th>25K × 10 ep (seed 7)</th></tr>
+          <tr><td><strong>FULL (depth + sibling + node_type)</strong></td><td>85 / 93</td><td>92 / 93</td><td>92 / 93</td></tr>
+          <tr><td>no_depth</td><td>80 / 93</td><td>93 / 93</td><td>90 / 93</td></tr>
+          <tr><td>no_sibling</td><td>79 / 93</td><td>91 / 93</td><td>92 / 93</td></tr>
+          <tr><td>sequential (learned pos[seq_idx])</td><td>79 / 93</td><td>92 / 93</td><td>92 / 93</td></tr>
+        </table>
+        <div class="key-property">
+          At 5K data, tree-PE wins by 5–6 tests. At 25K, all variants land in 90–93 — within
+          single-seed noise. <strong>Tree-PE is a data-efficiency lever, not a
+          permanent edge.</strong>
+        </div>
+        <div class="bug">
+          Bigger issue surfaced: <strong>the capability suite saturates</strong>. It
+          cannot differentiate trained models. Any architectural claim past 25K data
+          needs harder tests.
+        </div>
+        <aside class="notes">
+          When I ablated each component, I expected the FULL variant to dominate. At 5K
+          docs, it did — by 5-6 tests. But at 25K docs with two seeds, all four variants
+          landed inside the 90-93 range. The tree-PE advantage gets absorbed by attention
+          and data once you have enough of both. More importantly: the test suite I'd been
+          trusting to measure progress was saturated. It couldn't tell trained models
+          apart. That's the methodological problem this presentation pivots on.
+        </aside>
+      </section>
+
+      <!-- Slide 6: Bigger boat & embedding analysis -->
+      <section>
+        <h2>I needed a bigger boat — and found a data issue</h2>
+        <div class="two-col">
+          <div>
+            <h3>Bigger-boat test design</h3>
+            <ul>
+              <li>6 categories of harder tests, 25 cases total</li>
+              <li>Status-side completion</li>
+              <li>API-version awareness</li>
+              <li>Wrong-level prediction scoring</li>
+              <li>CRD-instance handling</li>
+              <li>Adversarial / OOD calibration</li>
+              <li>Confidence floors on existing tests</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Embedding-analysis finding</h3>
+            <div class="bug">
+              <strong>CRDs are 3% of docs but 46% of training tokens.</strong>
+            </div>
+            <p style="font-size:0.7em;">Average CRD is 1,219 tokens vs average Deployment's 80 — ~15× larger.
+            Half of all gradient updates were on JSON-schema content rather than actual K8s state.</p>
+          </div>
+        </div>
+        <iframe src="figures/kind_distribution.html" width="1150" height="430"></iframe>
+        <p style="font-size:0.6em;color:#aaa;">Left bars: share of documents. Right bars: share of
+        training tokens. CRDs jump from 3% to 46%.</p>
+        <aside class="notes">
+          Two threads in parallel. One: I designed a wider test suite to probe areas the
+          capability suite doesn't touch — status fields, API versions, novel CRDs.
+          Two: I visualized the training data and found CRDs were dominating training
+          tokens despite being a tiny fraction of documents. Each CRD is ~15× larger
+          than a typical manifest. So the model had been training half on schema
+          definitions, not real K8s state.
+        </aside>
+      </section>
+
+      <!-- Slide 7: The status [UNK] bug -->
+      <section>
+        <h2>Bigger boat exposed a sharp bug</h2>
+        <p style="font-size:0.8em;">Masked
+        <code>Deployment.status.replicas</code> in v5 →</p>
+        <pre><code>top-5 predictions:
+  1. [UNK]              (99.63%)   ← model is 99% confident in [UNK]
+  2. password           ( 0.07%)
+  3. password           ( 0.05%)
+  4. loadBalancer       ( 0.05%)
+  5. tls.crt            ( 0.03%)</code></pre>
+        <div class="bug">
+          Root cause: <code>status.X</code> bigrams were below <code>min_freq=100</code>
+          in training → became <code>[UNK]</code> in the target vocab. <strong>The
+          training loop was supervising the model to predict [UNK] confidently at 5.5%
+          of all key positions.</strong> A masked-LM bug we'd been carrying since v1.
+        </div>
+        <p style="font-size:0.7em;">Measured across the whole corpus: 718,725 of 13.1M training
+        key positions (5.5%) had [UNK] targets — all of them training the model to be
+        confident about the wrong answer.</p>
+        <aside class="notes">
+          This was the killer finding. When you mask a status field on a v5 model, it
+          confidently predicts [UNK] at 99.6%. The model isn't confused — it's perfectly
+          calibrated to its training. Because the (parent, child) bigram for status fields
+          was below min_freq=100 in the target vocab, every time the trainer masked one of
+          those positions, the loss was computed against [UNK] as the correct answer. The
+          model learned exactly what we taught it. This was a supervised bug, not a
+          model-capacity issue.
+        </aside>
+      </section>
+
+      <!-- Slide 8: v6.1 fix -->
+      <section>
+        <h2>v6.1 — fix the bug (5 lines)</h2>
+        <pre><code class="language-python"># yaml_bert/dataset.py::_getitem_v4 — Lever 1
+# BEFORE: any masked position got supervised, even if target was [UNK]
+# AFTER: compute target first; if it'd be [UNK], skip this position entirely
+
+target, head_type = compute_target(nodes[i], kind)
+target_id = vocab.encode_simple_target(target) if head_type == "simple" \
+                                                else vocab.encode_kind_target(target)
+if skip_unk_targets and target_id == unk_id:
+    continue   # ← the fix: position stays as input context, never becomes a label</code></pre>
+        <div class="key-property">
+          Position stays in the input sequence as context. Just doesn't generate a
+          training signal. Same model, same vocab, same data — only the masking policy
+          changes.
+        </div>
+        <p style="font-size:0.75em;">v6.1 trained from scratch on the same 276K corpus,
+        same 30 epochs, same hyperparameters. Only difference: this 5-line change.</p>
+        <aside class="notes">
+          The fix is tiny. Before, the dataset would mask any maskable position and let
+          the trainer compute loss against whatever target the vocab returned — including
+          [UNK]. After, we compute the target first; if it's [UNK], we don't mask the
+          position at all. The token still appears in the input — the model still sees
+          everything. We just don't ask the model to learn anything from this position.
+        </aside>
+      </section>
+
+      <!-- Slide 9: v6.1 results -->
+      <section>
+        <h2>v6.1 results — bug fixed, but vocab gap remains</h2>
+        <table>
+          <tr><th>Metric</th><th>v5</th><th>v6.1</th></tr>
+          <tr><td>Pretrain capability tests</td><td>93 / 93</td><td>92 / 93</td></tr>
+          <tr><td><strong>Structural tests</strong></td><td>6 / 9</td><td class="good"><strong>9 / 9</strong></td></tr>
+          <tr><td>Bigger boat — crd_pollution</td><td>4 / 4</td><td>4 / 4</td></tr>
+          <tr><td>Bigger boat — annotation_keys</td><td>2 / 2</td><td>2 / 2</td></tr>
+          <tr><td>Bigger boat — confidence_calib</td><td>3 / 3</td><td>3 / 3</td></tr>
+          <tr><td>Bigger boat — vocab_gap (status)</td><td>0 / 4</td><td>0 / 4 *</td></tr>
+        </table>
+        <div class="takeaway">
+          <strong>The [UNK] bug is gone.</strong> v5 predicted [UNK] at 99% on status
+          fields; v6.1 predicts real keys (wrong ones, but not [UNK]). Structural tests
+          went from 6/9 → 9/9.
+        </div>
+        <div class="bug">
+          <strong>* But bigger-boat vocab_gap still fails</strong> — because the
+          <em>status targets are still absent from the vocab</em>. The model defaults to
+          predicting spec-side keys. Lever 1 fixed the supervision; v6.2 needs to fix the
+          vocab.
+        </div>
+        <aside class="notes">
+          The structural tests went from 6/9 to 9/9 — the status failure is closed.
+          Capability tests dropped by 1, within noise. But the bigger boat vocab_gap
+          category still scores 0/4. Why? The status keys like 'availableReplicas' and
+          'currentReplicas' aren't in the target vocab at all. Lever 1 stopped the model
+          from confidently predicting [UNK], but it doesn't add new vocab. The model now
+          predicts the most plausible spec-side key at status positions. To get this
+          right, v6.2 has to actually add status targets to the vocab.
+        </aside>
+      </section>
+
+      <!-- Slide 10: Lessons & what's next -->
+      <section>
+        <h2>Lessons + what's next</h2>
+        <h3>Lessons</h3>
+        <ul>
+          <li>Capability test suites <strong>saturate</strong>. Once they do, they can no
+              longer differentiate models. Plan for that.</li>
+          <li><strong>Embedding analysis surfaces data-quality issues</strong> the test suite
+              can't catch (CRD token dominance).</li>
+          <li>Some "failures" are <strong>supervised bugs</strong>, not architectural limits.
+              v5's [UNK] overconfidence was the trainer doing exactly what we asked.</li>
+          <li>An inductive bias (tree-PE) can be a <strong>data-efficiency lever</strong>
+              without being a permanent edge at scale.</li>
+        </ul>
+        <h3>v6.2 + v7 roadmap</h3>
+        <ul>
+          <li><strong>v6.2</strong>: add status targets to the vocab (per-parent min_freq);
+              apiVersion-aware kind head; universal depth cap to rebalance CRD content</li>
+          <li><strong>v7</strong>: sub-tokenization for OOV resilience; tree-bias attention
+              for wrong-sibling prediction; bigger-boat suite expansion</li>
+        </ul>
+        <div class="key-property">
+          Honest research arc: hypothesis &rarr; result &rarr; ablation &rarr; harder
+          tests &rarr; surfaced bug &rarr; fix &rarr; honest gap analysis. The journey
+          taught more than the headline number.
+        </div>
+        <aside class="notes">
+          A few takeaways. One — capability tests are great but they saturate. Don't trust
+          them as the sole instrument. Two — when capability tests saturate, embedding
+          analysis can surface data quality issues you'd otherwise miss. The CRD finding
+          was a "look at the data" moment that the test suite never would have caught.
+          Three — not every failure is an architecture problem. Sometimes it's a bug.
+          Lever 1 was a 5-line bug fix that took a status test from 99% [UNK] confidence
+          to passing. Four — inductive biases buy you data efficiency, not permanent
+          advantages. Tree-PE helped at 5K, was a wash at 25K. That's a real result, not a
+          failure. The honest evaluation arc itself is the point of this talk.
+        </aside>
+      </section>
+
+    </div>
+  </div>
+
+  <div class="slide-footer">
+    <a href="https://github.com/vimalk78/yaml-bert">github.com/vimalk78/yaml-bert</a>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
+  <script>
+    Reveal.initialize({
+      width: 1200,
+      height: 900,
+      margin: 0.02,
+      minScale: 0.2,
+      maxScale: 1.5,
+      center: false,
+      hash: true,
+      plugins: [RevealHighlight, RevealNotes],
+    });
+  </script>
+</body>
+</html>
