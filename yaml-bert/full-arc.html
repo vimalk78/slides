@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="author" content="Vimal Kumar (vimalk78)">
+  <meta name="description" content="YAML-BERT — the full arc, v1 through v10.1, trained from scratch">
+  <meta name="source" content="https://github.com/vimalk78/slides">
+  <title>YAML-BERT — The Full Arc (v1 → v10.1)</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css">
+  <style>
+    .reveal h1, .reveal h2, .reveal h3 { text-transform: none; }
+    .reveal h1 { font-size: 1.7em; }
+    .reveal h2 { font-size: 1.25em; }
+    .reveal h3 { font-size: 1.0em; }
+    .reveal section { text-align: left; }
+    .reveal section.center-slide { text-align: center; }
+    .reveal ul { font-size: 0.8em; line-height: 1.5; }
+    .reveal li { margin-bottom: 0.3em; }
+    .reveal .subtitle { font-size: 0.6em; color: #aaa; margin-top: 0.5em; }
+    .reveal .author { font-size: 0.5em; color: #888; margin-top: 1.5em; }
+    .reveal .highlight { color: #42affa; }
+    .reveal .warn { color: #ff6b6b; }
+    .reveal .good { color: #5ad17a; }
+    .reveal .muted { color: #888; }
+    .reveal table { font-size: 0.7em; margin: 0.5em auto; border-collapse: collapse; }
+    .reveal th, .reveal td { padding: 0.3em 0.7em; border: 1px solid #555; text-align: center; }
+    .reveal th { background: #333; }
+    .reveal td.metric { text-align: left; }
+    .reveal .two-col { display: flex; gap: 1.5em; align-items: center; }
+    .reveal .two-col > div { flex: 1; }
+    .reveal .key-property {
+      background: rgba(66, 175, 250, 0.1);
+      border-left: 3px solid #42affa;
+      padding: 0.4em 0.8em; margin: 0.6em 0; font-size: 0.82em;
+    }
+    .reveal .evo { display: flex; gap: 0.6em; align-items: stretch; margin-top: 0.6em; }
+    .reveal .evo .phase {
+      flex: 1; background: rgba(255,255,255,0.04);
+      border: 1px solid #444; border-radius: 8px; padding: 0.6em 0.7em;
+    }
+    .reveal .evo .phase h3 { color: #42affa; font-size: 0.85em; margin: 0 0 0.2em; }
+    .reveal .evo .phase .tag { font-size: 0.6em; color: #888; }
+    .reveal .evo .phase p { font-size: 0.62em; line-height: 1.35; margin: 0.3em 0 0; }
+    .reveal .evo .arrow { display: flex; align-items: center; color: #42affa; font-size: 1.4em; }
+    .reveal .pivot { border-color: #5ad17a !important; box-shadow: 0 0 0 1px #5ad17a inset; }
+    .reveal .pivot h3 { color: #5ad17a !important; }
+    .slide-footer {
+      position: fixed; bottom: 10px; left: 20px; font-size: 0.65em;
+      color: #666; z-index: 100; font-family: system-ui, sans-serif;
+    }
+    .slide-footer a { color: #555; text-decoration: none; }
+    .slide-footer a:hover { color: #42affa; }
+    svg text { font-family: system-ui, sans-serif; }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- Slide 1: Title -->
+      <section class="center-slide">
+        <h1>YAML-BERT</h1>
+        <h2>Training a Tree-Aware Encoder for Kubernetes — from scratch</h2>
+        <p class="subtitle">Built to answer one question:<br>
+          how does attention behave when the input is a <em>tree</em>, not a sentence?</p>
+        <p class="subtitle">276K real Kubernetes manifests</p>
+        <p class="author">Vimal</p>
+        <aside class="notes">
+          Be honest up front: the goal was learning, not shipping a product. That frames
+          every "no-go" later as a finding, not a failure. This was my first transformer
+          trained from scratch — I wrote the model, the positional encoding, the training loop.
+        </aside>
+      </section>
+
+      <!-- Slide 2: Current architecture -->
+      <section>
+        <h2>From YAML to Vectors</h2>
+        <div class="two-col">
+          <div style="flex:0 0 46%; text-align:center;">
+            <svg viewBox="0 0 420 600" width="100%" style="max-height:640px;">
+              <defs>
+                <marker id="ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L6,3 L0,6 Z" fill="#42affa"/>
+                </marker>
+              </defs>
+              <g font-size="15" fill="#cfe8ff" text-anchor="middle">
+                <rect x="30" y="10" width="360" height="44" rx="8" fill="#16202b" stroke="#42affa"/>
+                <text x="210" y="37">YAML manifest</text>
+
+                <rect x="30" y="84" width="360" height="44" rx="8" fill="#16202b" stroke="#42affa"/>
+                <text x="210" y="104">Linearize → tree nodes</text>
+                <text x="210" y="121" font-size="11" fill="#8fb8d6">depth · sibling · node_type</text>
+
+                <rect x="30" y="158" width="360" height="44" rx="8" fill="#16202b" stroke="#42affa"/>
+                <text x="210" y="185">BPE tokenizer → subwords</text>
+
+                <rect x="30" y="232" width="360" height="44" rx="8" fill="#16202b" stroke="#42affa"/>
+                <text x="210" y="252">Embedding: token ⊕ tree-PE</text>
+                <text x="210" y="269" font-size="11" fill="#8fb8d6">depth + sibling + node_type</text>
+
+                <rect x="30" y="306" width="360" height="44" rx="8" fill="#16202b" stroke="#42affa"/>
+                <text x="210" y="333">Transformer Encoder (pre-norm)</text>
+
+                <rect x="30" y="380" width="360" height="48" rx="8" fill="#142a1c" stroke="#5ad17a" stroke-width="2"/>
+                <text x="210" y="409" fill="#bff0cf" font-weight="bold">Bottom-up Tree Aggregator</text>
+
+                <rect x="20" y="470" width="175" height="42" rx="8" fill="#1d1630" stroke="#b08cff"/>
+                <text x="107" y="496" fill="#dcceff" font-size="13">subtree vecs  sᵢ</text>
+                <rect x="225" y="470" width="175" height="42" rx="8" fill="#1d1630" stroke="#b08cff"/>
+                <text x="312" y="496" fill="#dcceff" font-size="13">doc_vec</text>
+
+                <rect x="20" y="545" width="175" height="44" rx="8" fill="#2a1518" stroke="#ff8d8d"/>
+                <text x="107" y="567" fill="#ffd2d2" font-size="13">Key Head</text>
+                <text x="107" y="582" fill="#c98f8f" font-size="9.5">[hᵢ ; doc_vec ; s_parent]</text>
+                <rect x="225" y="545" width="175" height="44" rx="8" fill="#2a1518" stroke="#ff8d8d"/>
+                <text x="312" y="567" fill="#ffd2d2" font-size="13">Recon Head</text>
+                <text x="312" y="582" fill="#c98f8f" font-size="9.5">doc_vec → bag-of-subwords</text>
+              </g>
+              <g stroke="#42affa" stroke-width="2" marker-end="url(#ar)">
+                <line x1="210" y1="54"  x2="210" y2="82"/>
+                <line x1="210" y1="128" x2="210" y2="156"/>
+                <line x1="210" y1="202" x2="210" y2="230"/>
+                <line x1="210" y1="276" x2="210" y2="304"/>
+                <line x1="210" y1="350" x2="210" y2="378"/>
+                <line x1="200" y1="428" x2="120" y2="468"/>
+                <line x1="220" y1="428" x2="300" y2="468"/>
+                <line x1="107" y1="512" x2="107" y2="543"/>
+                <line x1="312" y1="512" x2="312" y2="543"/>
+              </g>
+            </svg>
+          </div>
+          <div>
+            <ul style="font-size:0.72em;">
+              <li><strong>Linearize</strong> — YAML text into a node sequence; each node has
+                depth, sibling index, node type.</li>
+              <li><strong>Tokenize</strong> — BPE tokenizer trained on keys and values.</li>
+              <li><strong>Embed</strong> — token embedding + <span class="highlight">tree
+                positional encoding</span> (depth + sibling + node_type).</li>
+              <li><strong>Encode</strong> — pre-norm Transformer; bidirectional attention
+                over the whole manifest.</li>
+              <li><strong>Aggregate</strong> — <span class="good">bottom-up pool</span> →
+                one subtree vector per node + a <code>doc_vec</code>.</li>
+              <li><strong>Heads</strong> — Key Head predicts the unified masked key;
+                Recon Head rebuilds a subtree from <code>doc_vec</code>.</li>
+            </ul>
+          </div>
+        </div>
+        <aside class="notes">
+          Don't over-explain the heads. Land the two novel pieces: tree-PE and the aggregator.
+          Transition: "the next slide zooms into the aggregator — it's the one idea you
+          probably haven't seen before." Then move on.
+        </aside>
+      </section>
+
+      <!-- Slide 3: Aggregator zoom -->
+      <section>
+        <h2>Bottom-up Aggregation</h2>
+        <div style="text-align:center;">
+          <svg viewBox="0 0 760 400" width="92%" style="max-height:560px;">
+            <defs>
+              <marker id="gar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="#5ad17a"/>
+              </marker>
+            </defs>
+            <line x1="20" y1="320" x2="20" y2="110" stroke="#5ad17a" stroke-width="3" marker-end="url(#gar)"/>
+            <text transform="rotate(-90 13 220)" x="13" y="220" fill="#5ad17a"
+                  font-size="13" text-anchor="middle">bottom-up</text>
+
+            <g stroke="#5ad17a" stroke-width="2.5" marker-end="url(#gar)">
+              <line x1="115" y1="300" x2="190" y2="231"/>
+              <line x1="270" y1="300" x2="230" y2="231"/>
+              <line x1="210" y1="185" x2="372" y2="118"/>
+              <line x1="545" y1="300" x2="430" y2="118"/>
+              <line x1="480" y1="92"  x2="558" y2="92"/>
+            </g>
+            <!-- label the merge as the pooling operation -->
+            <line x1="312" y1="262" x2="232" y2="248" stroke="#5ad17a" stroke-width="1.5" stroke-dasharray="3"/>
+            <text x="318" y="266" fill="#5ad17a" font-size="13" text-anchor="start">pool ( mean )</text>
+
+            <g font-size="14" fill="#cfe8ff" text-anchor="middle">
+              <rect x="40"  y="300" width="150" height="40" rx="7" fill="#16202b" stroke="#5a6b7a"/>
+              <text x="115" y="325">image: nginx</text>
+              <rect x="215" y="300" width="110" height="40" rx="7" fill="#16202b" stroke="#5a6b7a"/>
+              <text x="270" y="325">port: 80</text>
+              <rect x="470" y="300" width="150" height="40" rx="7" fill="#16202b" stroke="#5a6b7a"/>
+              <text x="545" y="325">replicas: 3</text>
+
+              <text x="210" y="178" font-size="11" fill="#5ad17a">sᵢ</text>
+              <rect x="130" y="185" width="160" height="44" rx="7" fill="#142a1c" stroke="#5ad17a"/>
+              <text x="210" y="212">containers</text>
+
+              <text x="400" y="63" font-size="11" fill="#5ad17a">sᵢ</text>
+              <rect x="320" y="70" width="160" height="44" rx="7" fill="#142a1c" stroke="#5ad17a"/>
+              <text x="400" y="97">spec (root)</text>
+
+              <rect x="560" y="70" width="150" height="44" rx="7" fill="#1d1630" stroke="#b08cff" stroke-width="2"/>
+              <text x="635" y="97" fill="#dcceff" font-weight="bold">doc_vec</text>
+            </g>
+            <text x="40" y="362" font-size="12" fill="#888" text-anchor="start">leaf vectors = encoder hidden states</text>
+          </svg>
+        </div>
+        <div class="key-property" style="font-size:0.78em;">
+          Each internal node = <span class="good">pool( its children's subtree vectors )</span> → sᵢ;
+          the root's pool → <code>doc_vec</code>.
+          &nbsp;The pool is a simple <strong>mean</strong> — an <strong>attention-weighted</strong>
+          pool was also tried later.
+        </div>
+        <aside class="notes">
+          This is the slide the audience needs. Walk the flow bottom to top: leaf vectors are
+          just encoder hidden states; each parent pools its children into a subtree vector;
+          the root becomes doc_vec. End on the pooling choice — it seeds the next slide.
+        </aside>
+      </section>
+
+      <!-- Slide 4: Model training -->
+      <section>
+        <h2>How It's Trained — Self-Supervised, Two Masks</h2>
+        <ul style="font-size:0.78em;">
+          <li><strong>No labels.</strong> 276K real manifests; the model learns by predicting
+            parts of the input that are hidden from it.</li>
+          <li><strong>Masked-key prediction (MLM)</strong> — randomly mask ~15% of keys; the
+            <span class="highlight">Key Head</span> predicts each one back from bidirectional
+            context (+ <code>doc_vec</code> + parent subtree vector).</li>
+          <li><strong>Subtree reconstruction</strong> — <em>separately</em> mask 1–3 whole
+            subtrees; the <span class="highlight">Recon Head</span> rebuilds each subtree's
+            <strong>bag of value sub-words</strong> (a multi-hot vector over the vocab)
+            <span class="good">from <code>doc_vec</code> alone</span> — so <code>doc_vec</code>
+            must encode <em>which content is present</em>, not reproduce it.</li>
+          <li>The two masks are kept <strong>disjoint</strong> — a reconstruction subtree never
+            overlaps an MLM-masked key — so the objectives don't interfere.</li>
+        </ul>
+        <div class="key-property" style="font-size:0.78em; border-left-color:#5ad17a;">
+          MLM teaches <strong>local</strong> structure ("what key belongs here"); reconstruction
+          forces <code>doc_vec</code> to <strong>summarize</strong> a subtree.
+          &nbsp;<code>loss = MLM + λ·recon</code>.
+        </div>
+        <aside class="notes">
+          The "basic training" slide. Lead with MLM — that's the core BERT-style objective and
+          what every version since v4 was trained on. Reconstruction is the v8+ addition that
+          gives doc_vec a reason to summarize content. Nuance for Q&amp;A: the recon TARGET
+          changed across versions — v9 predicted bag-of-KEYS (trivially easy, the loss
+          flatlined); v10 switched to bag-of-value-SUBWORDS to force real content into doc_vec.
+          That redesign is the content story on the "Tried but Failed" slide.
+        </aside>
+      </section>
+
+      <!-- Slide 5: How it evolved -->
+      <section>
+        <h2>How the Architecture Evolved</h2>
+        <p style="font-size:0.72em; color:#aaa;">Three phases — the version numbers don't matter.</p>
+        <div class="evo">
+          <div class="phase">
+            <span class="tag">Phase A</span>
+            <h3>The token-level model</h3>
+            <p>A basic tree-aware BERT — MLM on keys, tree positional encoding.
+               Explored how to inject structure into the prediction target
+               (bigram → trigram), plus vocabulary &amp; data-hygiene fixes.</p>
+          </div>
+          <div class="arrow">→</div>
+          <div class="phase pivot">
+            <span class="tag">Phase B</span>
+            <h3>Document vectors</h3>
+            <p>Added the <strong>bottom-up aggregator</strong>: sub-structure vectors +
+               a <code>doc_vec</code>. The model stops being a token-predictor and starts
+               producing document &amp; subtree embeddings.</p>
+          </div>
+          <div class="arrow">→</div>
+          <div class="phase">
+            <span class="tag">Phase C</span>
+            <h3>Content in the vector</h3>
+            <p>Sub-word tokenization for values; then pushing <strong>content</strong> into
+               <code>doc_vec</code> (mean-pool → attention-pool).</p>
+          </div>
+        </div>
+        <aside class="notes">
+          The arc IS the story for this project — the artifact isn't the point, the learning is.
+          Call out Phase B explicitly as the pivot. Phase C is where "is the vector about shape or
+          content?" becomes the central tension, which sets up the results slide.
+        </aside>
+      </section>
+
+      <!-- Slide 6: Benchmarks -->
+      <section>
+        <h2>How Every Version Was Judged</h2>
+        <p style="font-size:0.74em; color:#aaa; margin:0.3em 0 0.5em;">Every test masks a key and
+          checks the model's top-5. The capability suite (93 cases) is scored each version, so the
+          numbers stay comparable; two harder suites probe edge cases.</p>
+        <table>
+          <tr><th class="metric">What's tested</th><th class="metric">Example</th></tr>
+          <tr><td class="metric">Structural basics</td>
+            <td class="metric">masked key must fit its parent / depth / sibling</td></tr>
+          <tr><td class="metric"><span class="highlight">Kind conditioning</span></td>
+            <td class="metric">same <code>spec</code> slot → Deployment <code>replicas</code>, Service <code>type</code>, ConfigMap <code>data</code></td></tr>
+          <tr><td class="metric">Per-kind schema <span class="muted">(15+ kinds)</span></td>
+            <td class="metric">StatefulSet <code>serviceName</code>, Job <code>backoffLimit</code>, HPA <code>maxReplicas</code></td></tr>
+          <tr><td class="metric">Negative calibration</td>
+            <td class="metric"><code>containers</code> under <code>metadata</code> → must <em>not</em> be top-1</td></tr>
+          <tr><td class="metric">Spec vs status <span class="muted">(structural)</span></td>
+            <td class="metric">key under <code>status</code> → predict status keys, not spec keys</td></tr>
+          <tr><td class="metric">Robustness <span class="muted">(edge cases)</span></td>
+            <td class="metric">rare keys / novel CRDs → sensible guess, no <code>[UNK]</code> or CRD-schema leak</td></tr>
+        </table>
+        <div class="key-property" style="font-size:0.74em; border-left-color:#ff6b6b;">
+          <strong>The catch:</strong> past enough data, the suite stops discriminating — very
+          different architectures all land ~90–93. A test that can't tell designs apart can't
+          justify a change. So we added harder probes on <code>doc_vec</code>:
+          cosine, retrieval, version-ordering.
+        </div>
+        <aside class="notes">
+          Make the point that the capability suite is the spine of the whole project — same
+          93 cases from v4 through v10.1, so a number in v5 is comparable to a number in v10.1.
+          But it saturates: once you have enough data every PE variant scores the same. That
+          saturation is what forced the harder probe suites once doc_vec existed.
+        </aside>
+      </section>
+
+      <!-- Slide 7: Ablations -->
+      <section>
+        <h2>Ablations</h2>
+        <p style="font-size:0.74em; color:#aaa;">Does encoding the tree actually help?
+          We trained the same model with tree-PE and with a plain sequential PE.</p>
+        <div class="key-property" style="font-size:0.84em;">
+          <ul style="margin:0;">
+            <li>With <strong>little data</strong>, tree-PE clearly won — passed ~5–6 more tests.</li>
+            <li>With <strong>more data</strong>, the measured gap closed — both ~92/93.</li>
+            <li>Tree-PE got there with <strong>10× fewer</strong> positional parameters.</li>
+          </ul>
+          <div style="margin-top:0.4em;">→ tree-PE buys <span class="good">data- &amp;
+            parameter-efficiency</span>. At scale the benchmark couldn't separate it from plain
+            PE — but that benchmark saturates, so "no gap" may just mean "can't tell."</div>
+        </div>
+        <aside class="notes">
+          The one controlled ablation: retrain the model with tree-PE vs a plain sequential PE,
+          same data. Tree-PE wins clearly when data is scarce, but the advantage washes out once
+          there's enough data — and it matches a 10× larger sequential PE on far fewer params.
+          Takeaway: tree-PE is a data- and parameter-efficiency lever. The accuracy gap closed at
+          25K, but on a saturated benchmark — so that's "couldn't measure a difference," not proof
+          there's none.
+        </aside>
+      </section>
+
+      <!-- Slide 8: Tried but Failed -->
+      <section>
+        <h2>Tried but Failed</h2>
+        <p style="font-size:0.74em; color:#aaa;">Two dead-ends — and they failed in different ways.</p>
+        <div class="key-property" style="font-size:0.86em; border-left-color:#ff6b6b;">
+          <strong>Tree-bias attention.</strong> Add a learned tree-distance bias to the attention scores.
+          <div style="margin-top:0.3em;">→ trained <strong>~15× slower</strong> — abandoned before a single result.
+            <span style="color:#888;">An engineering wall.</span></div>
+        </div>
+        <div class="key-property" style="font-size:0.86em; border-left-color:#ff6b6b;">
+          <strong>Content in the vector.</strong> Push values into <code>doc_vec</code> (mean → attention pool).
+          <div style="margin-top:0.3em;">→ retrieved by <strong>value</strong>, not just shape
+            (<span class="good">0 → 67%</span>), and ordered numbers like <code>replicas</code> —
+            but capability and structural probes <span class="warn">both dropped</span>.
+            <span style="color:#888;">A shape-vs-content tradeoff.</span></div>
+        </div>
+        <aside class="notes">
+          The honest "what didn't work" slide. Two distinct failure modes: tree-bias hit an
+          engineering wall (15× slowdown, never even produced a result), while the content push
+          worked on its own terms (retrieval 0→67%, version ordering passed) but regressed
+          structure, so it never shipped. Each seeds a lesson on the next slide — throughput is
+          part of the architecture; one vector can't carry both shape and content.
+        </aside>
+      </section>
+
+      <!-- Slide 9: Wanted to Try -->
+      <section>
+        <h2>Wanted to Try</h2>
+        <p style="font-size:0.74em; color:#aaa;">Directions we didn't get to.</p>
+        <div class="key-property" style="font-size:0.84em;">
+          <strong>Two vectors, not one.</strong> A separate shape-vector and content-vector —
+          each similarity job gets its own embedding instead of fighting over one.
+          <span style="color:#888;">The direct fix to the tradeoff.</span>
+        </div>
+        <div class="key-property" style="font-size:0.84em;">
+          <strong>Cross-document attention.</strong> Let the model see several manifests at once,
+          so it can learn relationships across them — does this Service select that Pod?
+        </div>
+        <div class="key-property" style="font-size:0.84em;">
+          <strong>YAML-T5.</strong> A tree-aware encoder–decoder that <em>generates</em> and edits
+          YAML — without the overhead of a general language model.
+        </div>
+        <aside class="notes">
+          The forward-looking slide. Three different axes, not a roadmap: two vectors fixes the
+          shape-vs-content tradeoff head-on; cross-document attention breaks the single-document
+          limit (foreign keys like Service↔Pod are invisible to a one-doc model); YAML-T5 moves
+          from an encoder that understands YAML to a decoder that writes it — kept small by
+          dropping the natural-language baggage a general LM carries.
+        </aside>
+      </section>
+
+      <!-- Slide 10: What we learned -->
+      <section>
+        <h2>What We Learned</h2>
+        <ul>
+          <li><strong>An aux loss teaches nothing if its answer is already in the input</strong>
+            — the model reads it off the residual stream; loss → 0, no learning.</li>
+          <li><strong>A sparse-target loss can silently collapse to all-zeros</strong>
+            — reconstruction loss flatlined until we up-weighted the positives.</li>
+          <li><strong>Bundle five changes and you can't attribute the result</strong> — which is why
+            the next experiment changed exactly one.</li>
+          <li><strong>Data hygiene often beats architecture</strong> — a data fix can outdo a clever model change.</li>
+          <li><strong>Mean-pool collapses minority signal</strong> under stereotyped inputs.</li>
+          <li><strong>One vector can't carry two similarity metrics</strong> — shape vs. content.</li>
+          <li><strong>Throughput is part of the architecture</strong> — correct but 15× slower is still a no-go.</li>
+          <li><span class="highlight">Meta:</span> attention routes around explicit structure when
+            a content shortcut is cheaper — kind-awareness came from reading the <code>kind:</code>
+            value, not our structural embeddings (removing values cost <span class="warn">36.7%</span> key accuracy).</li>
+        </ul>
+        <div class="key-property">
+          These transfer to any from-scratch model work — which is what makes the project
+          worth presenting, even though the later attempts never beat the baseline.
+        </div>
+        <aside class="notes">
+          The payoff slide — these are general, not YAML-specific. Detail per point:
+
+          1. Residual leakage: an aux loss that asks the model to predict something already in its
+          input teaches nothing — the input embedding carries the answer straight through the
+          residual stream, loss hits ~0 in a few batches, no gradient after. Tell: aux loss
+          flatlines in epoch 1 while main loss still drops. Verify with a linear probe on the input.
+
+          2. Sparse-target collapse: BCE on a sparse multi-hot target (which of 8,192 subwords are
+          present?) has a comfortable minimum at "predict all zeros" — the positive rate is so low
+          the loss looks tiny while nothing is learned. Our recon loss sat there until pos_weight ≈
+          neg/pos (2400). Purely statistical — a different cause from point 1.
+
+          Bundling: v10 changed five things at once — value absorption, recon-target redesign,
+          pre-norm, vocab shrink, loss reweighting. When results came in we couldn't tell which
+          caused what; v10.1 deliberately changed exactly one (mean→attention pool).
+
+          3. Data hygiene beats architecture: the biggest early wins were data fixes. A 5-line fix
+          to stop supervising the model toward [UNK] took structural tests 6/9 → 9/9; a depth cap
+          fixed CRDs being 3% of docs but 46% of training tokens. Meanwhile the fancy architectural
+          change (tree-bias) failed outright.
+
+          4. Mean-pool collapse: averaging child vectors let the boilerplate every manifest shares
+          (apiVersion/kind/metadata scaffolding) dominate doc_vec and wash out the distinctive bits
+          (the specific image, replicas) — a minority of tokens. That's why mean-pool couldn't
+          retrieve by content; attention-pool up-weights the distinctive tokens.
+
+          5. One vector, two metrics: doc_vec must be close for same-shape AND same-content
+          manifests — competing notions of "similar." Push content in and structure drops. One
+          fixed vector can't be optimal for both; you'd need two (the "wanted to try" slide).
+
+          6. Throughput is architecture: tree-bias attention was sound but ran ~15× slower, so it
+          never produced a result. A design you can't afford to train isn't usable.
+
+          7. Meta: we built structural embeddings expecting the model to infer kind from structure;
+          instead it read the literal "Deployment" string after kind:. Ablating values dropped key
+          prediction 36.7%. Models take the cheapest signal — explicit structural priors get
+          ignored when a content shortcut exists.
+        </aside>
+      </section>
+
+      <!-- Slide 11: Thank you -->
+      <section class="center-slide">
+        <h1>Thank you</h1>
+        <p class="subtitle" style="font-size:0.85em; margin-top:1em;">Try the deployed model</p>
+        <p style="font-size:1em; margin-top:0.3em;">
+          <a href="https://huggingface.co/spaces/vimalk78/yaml-bert" style="color:#42affa;">huggingface.co/spaces/vimalk78/yaml-bert</a>
+        </p>
+        <p class="author">Vimal</p>
+      </section>
+
+    </div>
+  </div>
+
+  <div class="slide-footer"><a href="https://github.com/vimalk78/slides">vimalk78</a></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+  <script>
+    Reveal.initialize({
+      hash: true,
+      slideNumber: true,
+      center: false,
+      width: 1200,
+      height: 900,
+      margin: 0.02,
+      minScale: 0.2,
+      maxScale: 1.5,
+      plugins: [ RevealNotes ]
+    });
+  </script>
+</body>
+</html>
